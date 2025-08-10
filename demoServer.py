@@ -151,7 +151,7 @@ class AnalysisPipeline:
 
 
 # --- MCP Server Setup ---
-# --- CHANGE: Moved stateless_http=True to the constructor as per deprecation warnings ---
+# --- FINAL FIX: Moved stateless_http=True to the constructor as per Vercel logs ---
 mcp = FastMCP(
     "Web Analyzer MCP Server",
     auth=SimpleBearerAuthProvider(TOKEN),
