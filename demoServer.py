@@ -151,15 +151,14 @@ class AnalysisPipeline:
 
 
 # --- MCP Server Setup ---
-# --- CHANGE: Moved stateless_http=True to the constructor to fix the Vercel crash ---
 mcp = FastMCP(
     "Web Analyzer MCP Server",
-    auth=SimpleBearerAuthProvider(TOKEN),
-    stateless_http=True
+    auth=SimpleBearerAuthProvider(TOKEN)
 )
 
 # --- This is the line that exposes the app for Vercel ---
-app = mcp.streamable_http_app()
+# It now uses the modern http_app() method with the stateless parameter
+app = mcp.http_app(transport="streamable-http", stateless=True)
 
 # --- Tool: validate (required by Puch) ---
 @mcp.tool
