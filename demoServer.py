@@ -1,3 +1,4 @@
+# main.py
 import asyncio
 import os
 import re
@@ -16,26 +17,21 @@ from pydantic import BaseModel, Field
 import markdownify
 import httpx
 
-# --- Load environment variables ---
+# Load env from .env (locally). On Vercel, set real env vars in dashboard.
 load_dotenv()
 
-# Puch & Auth Tokens
+# Required environment variables
 TOKEN = os.environ.get("AUTH_TOKEN")
 MY_NUMBER = os.environ.get("MY_NUMBER")
-
-# Google Gemini API Configuration
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-2.0-flash-lite")
 
-# --- Assertions for required environment variables ---
-assert TOKEN is not None, "Please set AUTH_TOKEN in your .env file"
-assert MY_NUMBER is not None, "Please set MY_NUMBER in your .env file"
-assert GEMINI_API_KEY is not None, "Please set GEMINI_API_KEY in your .env file"
+assert TOKEN is not None, "Please set AUTH_TOKEN in your .env file or environment"
+assert MY_NUMBER is not None, "Please set MY_NUMBER in your .env file or environment"
+assert GEMINI_API_KEY is not None, "Please set GEMINI_API_KEY in your .env file or environment"
 
-
-# --- Auth Provider (Required by Puch) ---
+# --- Auth Provider (Puch requirement) ---
 class SimpleBearerAuthProvider(BearerAuthProvider):
-    """A simple bearer token authentication provider for the server."""
     def __init__(self, token: str):
         k = RSAKeyPair.generate()
         super().__init__(public_key=k.public_key, jwks_uri=None, issuer=None, audience=None)
@@ -43,51 +39,46 @@ class SimpleBearerAuthProvider(BearerAuthProvider):
 
     async def load_access_token(self, token: str) -> AccessToken | None:
         if token == self.token:
-            return AccessToken(
-                token=token, client_id="puch-client", scopes=["*"], expires_at=None
-            )
+            return AccessToken(token=token, client_id="puch-client", scopes=["*"], expires_at=None)
         return None
 
-
-# --- Rich Tool Description model (for better AI understanding) ---
+# --- Tool description model ---
 class RichToolDescription(BaseModel):
     description: str
     use_when: str
     side_effects: str | None = None
 
-
-# --- Web Content Fetching and Parsing Utility Class ---
+# --- Web fetching / parsing utility ---
 class WebFetcher:
-    """A utility class to fetch and parse web content."""
-    USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/117.0.0.0 Safari/537.36 Puch/1.0"
+    USER_AGENT = (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/117.0.0.0 Safari/537.36 Puch/1.0"
+    )
 
     @classmethod
     async def fetch_html(cls, url: str) -> str:
         async with httpx.AsyncClient() as client:
             try:
-                response = await client.get(
-                    url, follow_redirects=True, headers={"User-Agent": cls.USER_AGENT}, timeout=30
-                )
-                response.raise_for_status()
-                return response.text
+                resp = await client.get(url, follow_redirects=True, headers={"User-Agent": cls.USER_AGENT}, timeout=30)
+                resp.raise_for_status()
+                return resp.text
             except httpx.HTTPError as e:
                 raise McpError(ErrorData(code=INTERNAL_ERROR, message=f"Failed to fetch {url}: {e!r}"))
 
     @staticmethod
     def parse_html_to_markdown(html: str) -> str:
         soup = BeautifulSoup(html, "html.parser")
-        for tag in soup(['script', 'style', 'nav', 'footer', 'header', 'aside']):
+        for tag in soup(["script", "style", "nav", "footer", "header", "aside", "form", "svg", "iframe"]):
             tag.decompose()
         main_content = soup.find("main") or soup.find("article") or soup.find("body")
         if not main_content:
             return "<error>Could not find main content in the page.</error>"
-        markdown_text = markdownify.markdownify(str(main_content), heading_style=markdownify.ATX)
-        return markdown_text.strip()
+        md = markdownify.markdownify(str(main_content), heading_style=markdownify.ATX)
+        return md.strip()
 
-# --- Advanced Multi-Agent Analysis Pipeline (Now using Gemini) ---
+# --- Multi-agent analysis pipeline using Google Gemini ---
 class AnalysisPipeline:
-    """Handles the advanced multi-agent logic for analyzing large texts."""
-    def __init__(self, api_key, model_name):
+    def __init__(self, api_key: str, model_name: str):
         genai.configure(api_key=api_key)
         self.model = genai.GenerativeModel(model_name)
 
@@ -103,145 +94,120 @@ class AnalysisPipeline:
         return chunks
 
     async def run_triage_agent(self, chunk: str, original_query: str) -> bool:
+        # quick path for "summarize" queries
         if "summarize" in original_query.lower():
             return True
+
         prompt = (
-            "You are a Triage Assistant. Your task is to determine if the given text chunk contains information that is potentially relevant to the user's question. "
-            "Focus on keywords and concepts. Answer only with 'YES' if it is relevant, or 'NO' if it is not.Think hard about the user's question and the content of the chunk."
-            "Assign relevance labels carefully, even if little relevance is found."
-            "\n\n"
-            f"User's question: '{original_query}'\n\n"
-            f"Text chunk to analyze:\n---\n{chunk}\n---"
+            "You are a Triage Assistant. Answer ONLY with YES or NO. "
+            "Return YES if the chunk is relevant to the user's question, otherwise NO.\n\n"
+            f"User's question: {original_query}\n\n"
+            f"Chunk:\n---\n{chunk}\n---"
         )
         try:
-            response = await self.model.generate_content_async(prompt)
-            return "YES" in response.text.strip().upper()
-        except Exception as e:
+            resp = await self.model.generate_content_async(prompt)
+            return "YES" in (resp.text or "").strip().upper()
+        except Exception:
             return False
 
     async def run_summarization_agent(self, chunk: str, original_query: str) -> str:
         prompt = (
-            "You are a Data Extraction Specialist. Your task is to carefully read the provided text and extract all facts, figures, and key points that are directly relevant to the user's question. "
-            "Present the extracted information as a concise, dense summary. If no relevant information is found, respond with an empty string.\n\n"
-            f"User's question: '{original_query}'\n\n"
-            f"Text to analyze:\n---\n{chunk}\n---"
+            "You are a Data Extraction Specialist. Extract facts and key points directly relevant "
+            "to the user's question. If none, return an empty string.\n\n"
+            f"User's question: {original_query}\n\n"
+            f"Text:\n---\n{chunk}\n---"
         )
         try:
-            response = await self.model.generate_content_async(prompt)
-            return response.text
-        except Exception as e:
+            resp = await self.model.generate_content_async(prompt)
+            return resp.text or ""
+        except Exception:
             return ""
 
     async def run_synthesizer_agent(self, relevant_summaries: list[str], original_query: str) -> str:
         if not relevant_summaries:
             return "I scanned the document but could not find any information relevant to your question."
-        combined_context = "\n\n---\n\n".join(relevant_summaries)
+
+        combined = "\n\n---\n\n".join(relevant_summaries)
         prompt = (
-            "You are a Final Answer Synthesizer. You have been provided with a collection of relevant text summaries extracted from a long document. "
-            "Your task is to synthesize this information into a single, comprehensive, and well-written answer to the user's original question. "
-            "Base your answer ONLY on the provided summaries. Do not add outside information or repeat yourself."
-            "Answer only the question asked, and do not include any additional information or context."
-            "Don't include any suggestions or prompts for further action."
-            "\n\n"
-            f"User's original question: '{original_query}'\n\n"
-            f"Combined relevant information:\n---\n{combined_context}\n---"
+            "You are a Final Answer Synthesizer. Use ONLY the provided summaries to answer the user's question. "
+            "Do not invent facts. Answer concisely.\n\n"
+            f"User's question: {original_query}\n\n"
+            f"Summaries:\n---\n{combined}\n---"
         )
-        response = await self.model.generate_content_async(prompt)
-        return response.text
+        resp = await self.model.generate_content_async(prompt)
+        return resp.text or "No useful content extracted."
 
+# --- MCP server setup (stateless) ---
+mcp = FastMCP("Web Analyzer MCP Server", auth=SimpleBearerAuthProvider(TOKEN), stateless_http=True)
 
-# --- MCP Server Setup ---
-# --- FINAL FIX: Moved stateless_http=True to the constructor as per Vercel logs ---
-mcp = FastMCP(
-    "Web Analyzer MCP Server",
-    auth=SimpleBearerAuthProvider(TOKEN),
-    stateless_http=True
-)
+# Create the ASGI app using a stateless/simple transport (no streaming)
+# This returns a FastAPI app that you can deploy to Vercel or other serverless platforms.
+app = mcp.http_app(transport="simple-http")
 
-# --- This is the line that exposes the app for Vercel ---
-# It now uses the modern http_app() method without extra arguments
-app = mcp.http_app(transport="streamable-http")
-
-# --- Tool: validate (required by Puch) ---
+# --- Required validate tool ---
 @mcp.tool
 async def validate() -> str:
-    """Validates the server's identity for Puch."""
     return MY_NUMBER
 
-
-# --- Main Web Scraping and Analysis Tool ---
+# --- web_analyzer tool (keeps same signature expected by Puch) ---
 WebAnalyzerDescription = RichToolDescription(
-    description="Analyzes a webpage's content to answer user questions. It can handle very long pages by intelligently processing them in parts.",
-    use_when="**MUST USE** this tool if the user's query contains a URL (e.g., 'http://', 'https://', 'www.'). This tool is specifically designed to handle web links.",
-    side_effects="Makes multiple external network requests to the provided URL and to an AI service. This may take several seconds for long pages.",
+    description="Analyze a webpage referenced in the user's query and answer questions about it.",
+    use_when="When the user's message contains a URL and asks a question about that page.",
+    side_effects="Makes network requests and calls Google Gemini."
 )
 
-@mcp.tool(
-    description=WebAnalyzerDescription.model_dump_json()
-)
-async def web_analyzer(
-    user_query: Annotated[str, Field(description="The user's full query, which should include a URL and a question.")]
-) -> str:
-    """
-    Extracts a URL from the user's query, scrapes it, and uses a multi-agent AI pipeline to answer the query based on the page content.
-    """
-    url_match = re.search(r'https?://[^\s]+', user_query)
-    
+@mcp.tool(description=WebAnalyzerDescription.model_dump_json())
+async def web_analyzer(user_query: Annotated[str, Field(description="User query including a URL")]) -> str:
+    url_match = re.search(r"https?://[^\s]+", user_query or "")
     if not url_match:
-        raise McpError(ErrorData(code=INVALID_PARAMS, message="I couldn't find a URL in your request. Please provide a full web address."))
+        raise McpError(ErrorData(code=INVALID_PARAMS, message="No URL found in the provided query."))
 
     url = url_match.group(0)
+    # infer the question text by removing the URL from the input
     parts = re.split(re.escape(url), user_query)
-    query_text = ' '.join(parts).strip()
+    query_text = " ".join([p.strip() for p in parts if p.strip()]).strip()
     if not query_text:
         query_text = "Summarize the content of the page."
 
     try:
-        html_content = await WebFetcher.fetch_html(url)
-        markdown_content = WebFetcher.parse_html_to_markdown(html_content)
-        
+        html = await WebFetcher.fetch_html(url)
+        md = WebFetcher.parse_html_to_markdown(html)
+
         pipeline = AnalysisPipeline(api_key=GEMINI_API_KEY, model_name=GEMINI_MODEL)
-        
-        chunks = pipeline.create_chunks(markdown_content)
+        chunks = pipeline.create_chunks(md)
 
         BATCH_SIZE = 5
-        DELAY_BETWEEN_BATCHES = 1
+        DELAY = 1
 
-        # Triage Agent: Run in batches
+        # Triage
         triage_results = []
         for i in range(0, len(chunks), BATCH_SIZE):
-            batch_chunks = chunks[i:i + BATCH_SIZE]
-            batch_tasks = [pipeline.run_triage_agent(chunk, query_text) for chunk in batch_chunks]
-            results = await asyncio.gather(*batch_tasks)
-            triage_results.extend(results)
+            batch = chunks[i : i + BATCH_SIZE]
+            tasks = [pipeline.run_triage_agent(c, query_text) for c in batch]
+            res = await asyncio.gather(*tasks)
+            triage_results.extend(res)
             if i + BATCH_SIZE < len(chunks):
-                await asyncio.sleep(DELAY_BETWEEN_BATCHES)
-        
-        relevant_chunks = [chunks[i] for i, is_relevant in enumerate(triage_results) if is_relevant]
+                await asyncio.sleep(DELAY)
 
+        relevant_chunks = [chunks[i] for i, ok in enumerate(triage_results) if ok]
         if not relevant_chunks:
             return "I scanned the document but could not find any information relevant to your question."
 
-        # Summarization Agent: Run in batches
+        # Summarize relevant chunks
         chunk_summaries = []
         for i in range(0, len(relevant_chunks), BATCH_SIZE):
-            batch_chunks = relevant_chunks[i:i + BATCH_SIZE]
-            batch_tasks = [pipeline.run_summarization_agent(chunk, query_text) for chunk in batch_chunks]
-            results = await asyncio.gather(*batch_tasks)
-            chunk_summaries.extend(results)
+            batch = relevant_chunks[i : i + BATCH_SIZE]
+            tasks = [pipeline.run_summarization_agent(c, query_text) for c in batch]
+            res = await asyncio.gather(*tasks)
+            chunk_summaries.extend(res)
             if i + BATCH_SIZE < len(relevant_chunks):
-                await asyncio.sleep(DELAY_BETWEEN_BATCHES)
-        
-        valid_summaries = [summary for summary in chunk_summaries if summary.strip()]
-        
-        # Synthesizer Agent: Get the final answer
-        final_answer = await pipeline.run_synthesizer_agent(valid_summaries, query_text)
-        
-        return final_answer
+                await asyncio.sleep(DELAY)
 
-    except McpError as e:
-        raise e
+        valid_summaries = [s for s in chunk_summaries if s and s.strip()]
+        final = await pipeline.run_synthesizer_agent(valid_summaries, query_text)
+        return final
+
+    except McpError:
+        raise
     except Exception as e:
-        raise McpError(ErrorData(code=INTERNAL_ERROR, message=f"An unexpected error occurred: {str(e)}"))
-
-# --- The main() function and __main__ block have been removed for Vercel deployment ---
+        raise McpError(ErrorData(code=INTERNAL_ERROR, message=f"Unexpected error: {e!s}"))
