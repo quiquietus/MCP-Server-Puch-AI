@@ -7,8 +7,9 @@
   ],
   "routes": [
     {
-      "src": "/(.*)",
+      "src": "/mcp/?(.*)",
       "dest": "demoServer.py"
     }
   ]
+
 }
