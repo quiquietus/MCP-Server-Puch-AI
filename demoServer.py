@@ -30,6 +30,7 @@ load_dotenv()
 TOKEN = os.environ.get("AUTH_TOKEN")
 MY_NUMBER = os.environ.get("MY_NUMBER")
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
+# Using the standard latest model name for the Flash series
 GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-2.0-flash-lite")
 
 assert TOKEN is not None, "Please set AUTH_TOKEN in your .env file"
@@ -187,8 +188,8 @@ async def web_analyzer(user_query: Annotated[str, Field(description="Full query 
         raise McpError(ErrorData(code=INTERNAL_ERROR, message=f"An unexpected error occurred: {str(e)}"))
 
 # ---------------- Vercel-friendly ASGI export ----------------
-# Use non-streamable "http" transport (no background task group required)
-mcp_asgi = mcp.http_app(transport="http", path="/mcp")
+# --- CHANGE: Set the path to "/" since Starlette handles the "/mcp/" prefix ---
+mcp_asgi = mcp.http_app(transport="http", path="/")
 if mcp_asgi is None:
     raise RuntimeError("mcp.http_app(...) returned None. Check fastmcp version and usage.")
 
