@@ -129,7 +129,7 @@ class AnalysisPipeline:
         return response.text or ""
 
 # --- MCP server and tools ---
-mcp = FastMCP("Web Analyzer MCP Server", auth=SimpleBearerAuthProvider(TOKEN))
+mcp = FastMCP("Web Analyzer MCP Server", auth=SimpleBearerAuthProvider(TOKEN), stateless_http = True)
 
 @mcp.tool
 async def validate() -> str:
@@ -196,7 +196,7 @@ async def root(request):
     return PlainTextResponse("MCP server running. Use POST /mcp/ with proper auth headers.")
 
 routes = [
-    # Route("/", root),
+    Route("/", root),
     Mount("/mcp/", mcp_asgi)
 ]
 
