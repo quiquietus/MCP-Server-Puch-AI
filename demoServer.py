@@ -25,7 +25,7 @@ MY_NUMBER = os.environ.get("MY_NUMBER")
 
 # Google Gemini API Configuration
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
-GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-2.0-flash-lite") # Using the standard latest model name
+GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-2.0-flash-lite")
 
 # --- Assertions for required environment variables ---
 assert TOKEN is not None, "Please set AUTH_TOKEN in your .env file"
@@ -71,7 +71,6 @@ class WebFetcher:
                 response.raise_for_status()
                 return response.text
             except httpx.HTTPError as e:
-                #print(f"❌ HTTP ERROR during fetch: {e!r}")
                 raise McpError(ErrorData(code=INTERNAL_ERROR, message=f"Failed to fetch {url}: {e!r}"))
 
     @staticmethod
@@ -93,10 +92,8 @@ class AnalysisPipeline:
         self.model = genai.GenerativeModel(model_name)
 
     def create_chunks(self, text: str, chunk_size: int = 15000, overlap: int = 500) -> list[str]:
-        """Splits text into smaller, overlapping chunks."""
         if len(text) <= chunk_size:
             return [text]
-        
         chunks = []
         start = 0
         while start < len(text):
@@ -106,10 +103,8 @@ class AnalysisPipeline:
         return chunks
 
     async def run_triage_agent(self, chunk: str, original_query: str) -> bool:
-        """Agent 1: Quickly determines if a chunk is relevant. Returns True or False."""
         if "summarize" in original_query.lower():
             return True
-
         prompt = (
             "You are a Triage Assistant. Your task is to determine if the given text chunk contains information that is potentially relevant to the user's question. "
             "Focus on keywords and concepts. Answer only with 'YES' if it is relevant, or 'NO' if it is not.Think hard about the user's question and the content of the chunk."
@@ -118,42 +113,29 @@ class AnalysisPipeline:
             f"User's question: '{original_query}'\n\n"
             f"Text chunk to analyze:\n---\n{chunk}\n---"
         )
-        
         try:
             response = await self.model.generate_content_async(prompt)
             return "YES" in response.text.strip().upper()
         except Exception as e:
-            #print(f"⚠️  Error in Triage Agent: {e}")
             return False
 
     async def run_summarization_agent(self, chunk: str, original_query: str) -> str:
-        """Agent 2: Extracts and summarizes relevant information from a single chunk."""
         prompt = (
             "You are a Data Extraction Specialist. Your task is to carefully read the provided text and extract all facts, figures, and key points that are directly relevant to the user's question. "
             "Present the extracted information as a concise, dense summary. If no relevant information is found, respond with an empty string.\n\n"
             f"User's question: '{original_query}'\n\n"
             f"Text to analyze:\n---\n{chunk}\n---"
         )
-        
         try:
             response = await self.model.generate_content_async(prompt)
             return response.text
         except Exception as e:
-            #print(f"⚠️  Error in Summarization Agent: {e}")
             return ""
 
     async def run_synthesizer_agent(self, relevant_summaries: list[str], original_query: str) -> str:
-        """Agent 3: Combines all summaries into a final, coherent answer."""
         if not relevant_summaries:
             return "I scanned the document but could not find any information relevant to your question."
-
         combined_context = "\n\n---\n\n".join(relevant_summaries)
-        
-        #print("\n" + "="*50)
-        #print("➡️  FINAL COMBINED CONTEXT FOR SYNTHESIZER AGENT (first 1500 chars):")
-        #print(combined_context[:1500] + "..." if len(combined_context) > 1500 else combined_context)
-        #print("="*50 + "\n")
-
         prompt = (
             "You are a Final Answer Synthesizer. You have been provided with a collection of relevant text summaries extracted from a long document. "
             "Your task is to synthesize this information into a single, comprehensive, and well-written answer to the user's original question. "
@@ -164,7 +146,6 @@ class AnalysisPipeline:
             f"User's original question: '{original_query}'\n\n"
             f"Combined relevant information:\n---\n{combined_context}\n---"
         )
-
         response = await self.model.generate_content_async(prompt)
         return response.text
 
@@ -175,7 +156,7 @@ mcp = FastMCP(
 )
 
 # --- This is the new line that exposes the app for Vercel ---
-app = mcp.app
+app = mcp.streamable_http_app(stateless=True)
 
 # --- Tool: validate (required by Puch) ---
 @mcp.tool
@@ -200,13 +181,9 @@ async def web_analyzer(
     """
     Extracts a URL from the user's query, scrapes it, and uses a multi-agent AI pipeline to answer the query based on the page content.
     """
-    #print("\n\n--- [WEB_ANALYZER TOOL CALLED SUCCESSFULLY] ---")
-    #print(f"RAW INPUT RECEIVED: {user_query}")
-
     url_match = re.search(r'https?://[^\s]+', user_query)
     
     if not url_match:
-        #print("❌ ERROR: No URL found in the user's query.")
         raise McpError(ErrorData(code=INVALID_PARAMS, message="I couldn't find a URL in your request. Please provide a full web address."))
 
     url = url_match.group(0)
@@ -215,20 +192,13 @@ async def web_analyzer(
     if not query_text:
         query_text = "Summarize the content of the page."
 
-    #print(f"➡️ 1. Extracted URL: {url}")
-    #print(f"➡️ 2. Inferred Query: {query_text}")
-
     try:
         html_content = await WebFetcher.fetch_html(url)
-        #print(f"✅ 3. Successfully fetched {len(html_content)} bytes of HTML.")
-
         markdown_content = WebFetcher.parse_html_to_markdown(html_content)
-        #print(f"✅ 4. Successfully parsed content to Markdown.")
         
         pipeline = AnalysisPipeline(api_key=GEMINI_API_KEY, model_name=GEMINI_MODEL)
         
         chunks = pipeline.create_chunks(markdown_content)
-        #print(f"➡️ 5. Content split into {len(chunks)} chunk(s). Starting multi-agent pipeline...")
 
         BATCH_SIZE = 5
         DELAY_BETWEEN_BATCHES = 1
@@ -237,16 +207,13 @@ async def web_analyzer(
         triage_results = []
         for i in range(0, len(chunks), BATCH_SIZE):
             batch_chunks = chunks[i:i + BATCH_SIZE]
-            #print(f"➡️  Processing Triage Batch {i//BATCH_SIZE + 1}/{ -(-len(chunks)//BATCH_SIZE) }...")
             batch_tasks = [pipeline.run_triage_agent(chunk, query_text) for chunk in batch_chunks]
             results = await asyncio.gather(*batch_tasks)
             triage_results.extend(results)
             if i + BATCH_SIZE < len(chunks):
-                #print(f"--- Waiting for {DELAY_BETWEEN_BATCHES}s to respect rate limits ---")
                 await asyncio.sleep(DELAY_BETWEEN_BATCHES)
         
         relevant_chunks = [chunks[i] for i, is_relevant in enumerate(triage_results) if is_relevant]
-        #print(f"✅ 6. Triage Agent identified {len(relevant_chunks)} potentially relevant chunk(s).")
 
         if not relevant_chunks:
             return "I scanned the document but could not find any information relevant to your question."
@@ -255,30 +222,22 @@ async def web_analyzer(
         chunk_summaries = []
         for i in range(0, len(relevant_chunks), BATCH_SIZE):
             batch_chunks = relevant_chunks[i:i + BATCH_SIZE]
-            #print(f"➡️  Processing Summarization Batch {i//BATCH_SIZE + 1}/{ -(-len(relevant_chunks)//BATCH_SIZE) }...")
             batch_tasks = [pipeline.run_summarization_agent(chunk, query_text) for chunk in batch_chunks]
             results = await asyncio.gather(*batch_tasks)
             chunk_summaries.extend(results)
             if i + BATCH_SIZE < len(relevant_chunks):
-                #print(f"--- Waiting for {DELAY_BETWEEN_BATCHES}s to respect rate limits ---")
                 await asyncio.sleep(DELAY_BETWEEN_BATCHES)
         
         valid_summaries = [summary for summary in chunk_summaries if summary.strip()]
-        #print(f"✅ 7. Summarization Agent extracted info from {len(valid_summaries)} chunk(s).")
         
         # Synthesizer Agent: Get the final answer
-        #print("➡️ 8. Synthesizer Agent is generating the final answer...")
         final_answer = await pipeline.run_synthesizer_agent(valid_summaries, query_text)
         
-        #print("✅ 9. Final answer generated. Returning to user.")
-        #print("--- [REQUEST COMPLETE] ---\n")
         return final_answer
 
     except McpError as e:
         raise e
     except Exception as e:
-        #print(f"❌ An unexpected error occurred in web_analyzer: {e}")
         raise McpError(ErrorData(code=INTERNAL_ERROR, message=f"An unexpected error occurred: {str(e)}"))
-
 
 # --- The main() function and __main__ block have been removed for Vercel deployment ---
