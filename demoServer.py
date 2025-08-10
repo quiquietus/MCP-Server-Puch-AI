@@ -1,3 +1,6 @@
+# demoServer.py
+# Keep all logic unchanged — only the ASGI export / transport is adjusted for Vercel.
+
 import asyncio
 import os
 import re
@@ -27,6 +30,7 @@ load_dotenv()
 TOKEN = os.environ.get("AUTH_TOKEN")
 MY_NUMBER = os.environ.get("MY_NUMBER")
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
+# Using the standard latest model name for the Flash series
 GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-1.5-flash-latest")
 
 assert TOKEN is not None, "Please set AUTH_TOKEN in your .env file"
@@ -126,7 +130,7 @@ class AnalysisPipeline:
         return response.text or ""
 
 # --- MCP server and tools ---
-mcp = FastMCP("Web Analyzer MCP Server", auth=SimpleBearerAuthProvider(TOKEN), stateless_http = True)
+mcp = FastMCP("Web Analyzer MCP Server", auth=SimpleBearerAuthProvider(TOKEN))
 
 @mcp.tool
 async def validate() -> str:
@@ -186,16 +190,16 @@ async def web_analyzer(user_query: Annotated[str, Field(description="Full query 
 # ---------------- Vercel-friendly ASGI export ----------------
 # Use non-streamable "http" transport (no background task group required)
 # --- FINAL FIX: Set the path to "/" since Starlette handles the "/mcp/" prefix ---
-# mcp_asgi = mcp.http_app(transport="http", path="/")
-# if mcp_asgi is None:
-#     raise RuntimeError("mcp.http_app(...) returned None. Check fastmcp version and usage.")
+mcp_asgi = mcp.http_app(transport="http", path="/")
+if mcp_asgi is None:
+    raise RuntimeError("mcp.http_app(...) returned None. Check fastmcp version and usage.")
 
-# async def root(request):
-#     return PlainTextResponse("MCP server running. Use POST /mcp/ with proper auth headers.")
+async def root(request):
+    return PlainTextResponse("MCP server running. Use POST /mcp/ with proper auth headers.")
 
-# routes = [
-#     Route("/", root),
-#     Mount("/mcp/", mcp_asgi),
-# ]
+routes = [
+    Route("/", root),
+    Mount("/mcp/", mcp_asgi),
+]
 
-app = mcp.http_app(transport="streamable-http")
+app = Starlette(routes=routes)
