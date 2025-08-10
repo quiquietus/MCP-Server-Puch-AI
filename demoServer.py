@@ -197,7 +197,7 @@ async def root(request):
 
 routes = [
     Route("/", root),
-    Mount("/mcp", mcp_asgi),
+    Mount("/mcp/", mcp_asgi),
 ]
 
 app = Starlette(routes=routes)
