@@ -7,7 +7,6 @@ from bs4 import BeautifulSoup
 from dotenv import load_dotenv
 from fastmcp import FastMCP
 from fastmcp.server.auth.providers.bearer import BearerAuthProvider, RSAKeyPair
-# --- CHANGE: Swapped Groq for Google Gemini ---
 import google.generativeai as genai
 from mcp import ErrorData, McpError
 from mcp.server.auth.provider import AccessToken
@@ -24,9 +23,9 @@ load_dotenv()
 TOKEN = os.environ.get("AUTH_TOKEN")
 MY_NUMBER = os.environ.get("MY_NUMBER")
 
-# --- CHANGE: Swapped Groq for Google Gemini ---
+# Google Gemini API Configuration
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
-GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-2.0-flash-lite")
+GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-2.0-flash-lite") # Using the standard latest model name
 
 # --- Assertions for required environment variables ---
 assert TOKEN is not None, "Please set AUTH_TOKEN in your .env file"
@@ -175,6 +174,9 @@ mcp = FastMCP(
     "Web Analyzer MCP Server", auth=SimpleBearerAuthProvider(TOKEN)
 )
 
+# --- This is the new line that exposes the app for Vercel ---
+app = mcp.app
+
 # --- Tool: validate (required by Puch) ---
 @mcp.tool
 async def validate() -> str:
@@ -279,12 +281,4 @@ async def web_analyzer(
         raise McpError(ErrorData(code=INTERNAL_ERROR, message=f"An unexpected error occurred: {str(e)}"))
 
 
-# --- Run MCP Server ---
-async def main():
-    #print(f"🚀 Starting MCP server on http://0.0.0.0:8086 in STATELESS mode.")
-    #print(f"Loaded Gemini Model: {GEMINI_MODEL}")
-    #print("Available tools: validate, web_analyzer")
-    await mcp.run_async("streamable-http", host="0.0.0.0", port=8086, stateless_http=True)
-
-if __name__ == "__main__":
-    asyncio.run(main())
+# --- The main() function and __main__ block have been removed for Vercel deployment ---
