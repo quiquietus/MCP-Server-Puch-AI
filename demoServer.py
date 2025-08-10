@@ -196,8 +196,8 @@ async def root(request):
     return PlainTextResponse("MCP server running. Use POST /mcp/ with proper auth headers.")
 
 routes = [
-    Route("/", root),
-    Mount("/mcp/", mcp_asgi),
+    # Route("/", root),
+    Mount("/mcp/", mcp_asgi)
 ]
 
 app = Starlette(routes=routes)
