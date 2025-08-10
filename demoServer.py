@@ -1,8 +1,5 @@
 # demoServer.py
-# (Everything up to the "Run MCP Server" section remains unchanged from your original)
-# I include the full file but the only intentional runtime change is at the bottom:
-#   - we do NOT call mcp.run_async()
-#   - we export `app = mcp.http_app(...)` for Vercel
+# (unchanged logic for fetchers, pipeline, tools — only the app export at bottom differs)
 
 import asyncio
 import os
@@ -22,6 +19,11 @@ from pydantic import BaseModel, Field
 
 import markdownify
 import httpx
+
+# Starlette is already in your deps; we'll mount the MCP app under /mcp
+from starlette.applications import Starlette
+from starlette.responses import PlainTextResponse
+from starlette.routing import Route, Mount
 
 # --- Load environment variables ---
 load_dotenv()
@@ -78,7 +80,6 @@ class WebFetcher:
                 response.raise_for_status()
                 return response.text
             except httpx.HTTPError as e:
-                #print(f"❌ HTTP ERROR during fetch: {e!r}")
                 raise McpError(ErrorData(code=INTERNAL_ERROR, message=f"Failed to fetch {url}: {e!r}"))
 
     @staticmethod
@@ -129,8 +130,7 @@ class AnalysisPipeline:
         try:
             response = await self.model.generate_content_async(prompt)
             return "YES" in response.text.strip().upper()
-        except Exception as e:
-            #print(f"⚠️  Error in Triage Agent: {e}")
+        except Exception:
             return False
 
     async def run_summarization_agent(self, chunk: str, original_query: str) -> str:
@@ -145,8 +145,7 @@ class AnalysisPipeline:
         try:
             response = await self.model.generate_content_async(prompt)
             return response.text
-        except Exception as e:
-            #print(f"⚠️  Error in Summarization Agent: {e}")
+        except Exception:
             return ""
 
     async def run_synthesizer_agent(self, relevant_summaries: list[str], original_query: str) -> str:
@@ -254,19 +253,20 @@ async def web_analyzer(
         raise McpError(ErrorData(code=INTERNAL_ERROR, message=f"An unexpected error occurred: {str(e)}"))
 
 
-# ---------------------- IMPORTANT: Vercel / Serverless startup ----------------------
-# Instead of calling `mcp.run_async(...)` (which creates a background task group and fails in serverless),
-# export an ASGI app that Vercel's Python builder expects. This does NOT change your tools or behavior.
-#
-# We mount the MCP HTTP app at path "/mcp". Vercel will import this module and expect `app` to be
-# an ASGI callable. Make sure Vercel env vars AUTH_TOKEN, MY_NUMBER, GEMINI_API_KEY exist.
+# ---------------------- Vercel-friendly ASGI export ----------------------
+# Use the non-streamable "http" transport to avoid the "Task group is not initialized" issue
+mcp_asgi = mcp.http_app(transport="http")
+if mcp_asgi is None:
+    raise RuntimeError("mcp.http_app(...) returned None. Check fastmcp version and usage.")
 
-# create the ASGI app and export it as `app`
-_app = mcp.http_app(transport="streamable-http", path="/mcp", stateless=True)
+# Mount the MCP ASGI app at /mcp so your routes remain the same.
+# We also add a tiny root route so GET / returns a friendly message (optional).
+async def root(request):
+    return PlainTextResponse("MCP server running. Use POST /mcp/ with proper auth headers.")
 
-if _app is None:
-    # fail early with a clear error
-    raise RuntimeError("mcp.http_app(...) returned None — check fastmcp version and usage.")
+routes = [
+    Route("/", root),
+    Mount("/mcp", mcp_asgi),
+]
 
-# Vercel expects the variable named `app`
-app = _app
+app = Starlette(routes=routes)
