@@ -7,10 +7,6 @@
   ],
   "routes": [
     {
-      "src": "/mcp(.*)",
-      "dest": "demoServer.py"
-    },
-    {
       "src": "/(.*)",
       "dest": "demoServer.py"
     }
