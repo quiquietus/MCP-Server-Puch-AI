@@ -186,16 +186,16 @@ async def web_analyzer(user_query: Annotated[str, Field(description="Full query 
 # ---------------- Vercel-friendly ASGI export ----------------
 # Use non-streamable "http" transport (no background task group required)
 # --- FINAL FIX: Set the path to "/" since Starlette handles the "/mcp/" prefix ---
-mcp_asgi = mcp.http_app(transport="http", path="/")
-if mcp_asgi is None:
-    raise RuntimeError("mcp.http_app(...) returned None. Check fastmcp version and usage.")
+# mcp_asgi = mcp.http_app(transport="http", path="/")
+# if mcp_asgi is None:
+#     raise RuntimeError("mcp.http_app(...) returned None. Check fastmcp version and usage.")
 
-async def root(request):
-    return PlainTextResponse("MCP server running. Use POST /mcp/ with proper auth headers.")
+# async def root(request):
+#     return PlainTextResponse("MCP server running. Use POST /mcp/ with proper auth headers.")
 
-routes = [
-    Route("/", root),
-    Mount("/mcp/", mcp_asgi),
-]
+# routes = [
+#     Route("/", root),
+#     Mount("/mcp/", mcp_asgi),
+# ]
 
-app = Starlette(routes=routes)
+app = mcp.http_app(transport="streamable-http")
