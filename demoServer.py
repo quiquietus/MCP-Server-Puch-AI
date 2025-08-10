@@ -188,7 +188,7 @@ async def web_analyzer(user_query: Annotated[str, Field(description="Full query 
 
 # ---------------- Vercel-friendly ASGI export ----------------
 # Use non-streamable "http" transport (no background task group required)
-mcp_asgi = mcp.http_app(transport="http", path="/mcp")
+mcp_asgi = mcp.http_app(transport="http")
 if mcp_asgi is None:
     raise RuntimeError("mcp.http_app(...) returned None. Check fastmcp version and usage.")
 
