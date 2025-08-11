@@ -13,6 +13,7 @@ from mcp import ErrorData, McpError
 from mcp.server.auth.provider import AccessToken
 from mcp.types import INTERNAL_ERROR, INVALID_PARAMS
 from pydantic import BaseModel, Field
+from textwrap import dedent
 
 import markdownify
 import httpx
@@ -181,7 +182,20 @@ async def validate() -> str:
     """Validates the server's identity for Puch."""
     return MY_NUMBER
 
+@mcp.tool
+async def about() -> dict[str, str]:
+    server_name = "Web Analyzer MCP"
+    server_description = dedent("""
+    Web Analyzer MCP — paste a link, ask a question, get the answer. 
+    This assistant fetches any web page, strips clutter, and returns concise, human-ready summaries, facts, and key takeaways — even from very long articles. 
+    Powered by a multi-agent AI pipeline (Google Gemini), it triages content, extracts relevant portions, and synthesizes clear answers so you can read less and know more.
+    Perfect for quick research, fact checks, and chat-first workflows: send any URL + whatever question is on your mind.
+    """)
 
+    return {
+        "name": server_name,
+        "description": server_description
+    }
 # --- Main Web Scraping and Analysis Tool ---
 WebAnalyzerDescription = RichToolDescription(
     description="Analyzes a webpage's content to answer user questions. It can handle very long pages by intelligently processing them in parts.",
